@@ -1,12 +1,14 @@
+#include <math.h>
+#include <signal.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <stdbool.h>
-#include <math.h>
-#include <time.h>
+#include <unistd.h>
 
-#define WIDTH 64
+#define WIDTH 78
 #define HEIGHT 64
-#define FPS 60
+#define FPS 30
+#define DT (1.0f / FPS)
 
 enum {
     OFF = 0,
@@ -20,6 +22,7 @@ char pixel[2][2] = {
 
 int buffer[WIDTH * HEIGHT];
 char display[WIDTH * HEIGHT/2];
+bool quit = false;
 
 typedef struct { float x,y; } V2f;
 
@@ -29,23 +32,26 @@ V2f v2f(float x, float y) {
 }
 
 V2f v2f_sub(V2f a, V2f b) {
-    V2f result = {a.x-b.x, a.y-b.y};
-    return result;
+    a.x -= b.x;
+    a.y -= b.y;
+    return a;
 }
 
 V2f v2f_add(V2f a, V2f b) {
-    V2f result = {a.x+b.x, a.y+b.y};
-    return result;
+    a.x += b.x;
+    a.y += b.y;
+    return a;
 }
 
-double v2f_dist(V2f a, V2f b) {
+float v2f_dist(V2f a, V2f b) {
     V2f diff = {fabs(a.x-b.x), fabs(a.y-b.y)};
     return sqrt(diff.x*diff.x + diff.y*diff.y);
 }
 
 V2f v2f_scale(V2f v, float s) {
-    V2f new_v = {v.x*s, v.y*s};
-    return new_v;
+    v.x *= s;
+    v.y *= s;
+    return v;
 }
 
 void fill(int c) {
@@ -61,7 +67,7 @@ void circle(V2f center, int radius) {
     for (int j=top_left.y; j<bottom_right.y; j++) {
         for (int i=top_left.x; i<bottom_right.x; i++) {
             if (j >= 0 && j < HEIGHT && i >= 0 && i < WIDTH && 
-                v2f_dist(v2f(i,j), center) <= (double)radius)
+                v2f_dist(v2f(i,j), center) <= (float)radius)
             {
                 buffer[j * WIDTH + i] = ON;
             }
@@ -82,38 +88,41 @@ void show(void) {
     printf("\x1b[%dA \x1b[%dD", HEIGHT/2, WIDTH);
 }
 
+void sigint_handler(int signum) {
+    quit = true;
+}
+
 int main(void) {
+    /* hide cursor */
     printf("\e[?25l");
-    V2f pos = { WIDTH/2, HEIGHT/2 };
+
+    struct sigaction sa = {0};
+    sa.sa_handler = sigint_handler;
+    if (sigaction(SIGINT, &sa, NULL) == -1) {
+        perror("sigaction"); exit(1);
+    }
+
     int radius = 12;
-    bool quit = false;
-    V2f vel = { 0.001f, 0.000f };
-    V2f acc = { 0.0f, 0.000001f };
-    
-    double prev_time = clock()/CLOCKS_PER_SEC;
-    double frame_time;
+    V2f pos = { radius, radius };
+    V2f vel = { 30.0f, 0.0f };
+    V2f acc = { 0.0f, 169.0f };
 
     while (!quit) {
-        double now = clock()/CLOCKS_PER_SEC;
-        frame_time += now - prev_time;
+        vel = v2f_add(vel, v2f_scale(acc, DT));
+        pos = v2f_add(pos, v2f_scale(vel, DT));
 
-        if (frame_time < FPS / 1000)
-            continue;
-
-        frame_time -= FPS / 1000;
-
-        vel = v2f_add(vel, acc);
-        pos = v2f_add(pos, vel);
-
-        if (pos.y + radius >= HEIGHT) {
+        if (pos.y + radius > HEIGHT) {
             pos.y = HEIGHT - radius;
-            vel.y *= -1;
+            vel.y *= -1.0f;
+        } else if (pos.y - radius <= 0) {
+            pos.y = radius;
+            vel.y *= -1.0f;
         }
 
-        if (pos.x + radius >= WIDTH) {
+        if (pos.x + radius > WIDTH) {
             pos.x = WIDTH - radius;
             vel.x *= -1;
-        } else if (pos.x - radius <= 0) {
+        } else if (pos.x - radius < 0) {
             pos.x = radius;
             vel.x *= -1;
         }
@@ -121,7 +130,12 @@ int main(void) {
         fill(OFF);
         circle(pos, radius);
         show();
+
+        usleep(1000*1000 / FPS);
     }
+
+    /* show cursor */
+    printf("\e[?25h");
 
     return 0;
 }
